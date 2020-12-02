@@ -142,9 +142,9 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         sceneView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
 
 
-        let gesture = UITapGestureRecognizer(target: self, action:  #selector(self.checkAction))
-        self.webView.addGestureRecognizer(gesture)
-        let timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(timerAction), userInfo: nil, repeats: true)
+        // let gesture = UITapGestureRecognizer(target: self, action:  #selector(self.checkAction))
+        // self.webView.addGestureRecognizer(gesture)
+        // let timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(timerAction), userInfo: nil, repeats: true)
     }
 
     @objc func checkAction(sender : UITapGestureRecognizer) {
@@ -153,7 +153,7 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     @objc
-    func timerAction(_ timer: Timer) {
+    func timerAction() {
         let yOffset = self.webView.scrollView.contentOffset.y + (LINE_HEIGHT * LINES_PER_SECOND)
         let scrollView = self.webView.scrollView
 
@@ -168,9 +168,12 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
             return
         } else {
         DispatchQueue.main.async {
-            UIView.animate(withDuration: 1, delay: 0, options: UIView.AnimationOptions.curveLinear, animations: {
+            UIView.animate(withDuration: 0.5, delay: 0, options: UIView.AnimationOptions.curveLinear, animations: {
                 scrollView.contentOffset.y = yOffset
         }, completion: nil) }
+            // DispatchQueue.main.async {
+            //     scrollView.contentOffset.y = yOffset
+            // }
         }
     }
     
@@ -196,6 +199,19 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     func update(withFaceAnchor anchor: ARFaceAnchor) {
         _faceAnchor = anchor
 
+
+        if (!anchor.isTracked) {
+            maximumX = -500
+            return
+        }
+
+        let eyeBlinkValueL = anchor.blendShapes[.eyeBlinkLeft]?.floatValue ?? 0.0
+        let eyeBlinkValueR = anchor.blendShapes[.eyeBlinkRight]?.floatValue ?? 0.0
+        
+        if (eyeBlinkValueL > 0.3 || eyeBlinkValueR > 0.3) {
+            return
+        }
+
         eyeRNode.simdTransform = anchor.rightEyeTransform
         eyeLNode.simdTransform = anchor.leftEyeTransform
         
@@ -206,7 +222,7 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         lookAtTargetLANode.position = SCNVector3.init(anchor.lookAtPoint)
         lookAtTargetLANode.position.z = 2
         
-        let heightCompensation: CGFloat = 312 * (1.5)
+        let heightCompensation: CGFloat = 312 * (-0.75)
         
         DispatchQueue.main.async {
 
@@ -240,11 +256,11 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
             }
             
             // Add the latest position and keep up to 8 recent position to smooth with.
-            let smoothThresholdNumber: Int = 5
+            let smoothThresholdNumber: Int = 3
             // self.eyeLookAtPositionXs.append(blendLookAtPoint.x)
             // self.eyeLookAtPositionYs.append(blendLookAtPoint.y)
-            self.eyeLookAtPositionXs.append((eyeRLookAt.x + eyeLLookAt.x) / 2)
-            self.eyeLookAtPositionYs.append(-(eyeRLookAt.y + eyeLLookAt.y) / 2)
+            self.eyeLookAtPositionXs.append((eyeRLookAt.x + eyeLLookAt.x + blendLookAtPoint.x) / 3)
+            self.eyeLookAtPositionYs.append(-(eyeRLookAt.y + eyeLLookAt.y + blendLookAtPoint.y) / 3)
             self.eyeLookAtPositionXs = Array(self.eyeLookAtPositionXs.suffix(smoothThresholdNumber))
             self.eyeLookAtPositionYs = Array(self.eyeLookAtPositionYs.suffix(smoothThresholdNumber))
             
@@ -275,7 +291,7 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         }
     }
 
-    public var LEFT_LOOK_THRESHOLD : Float = 100.0
+    public var LEFT_LOOK_THRESHOLD : Int = 75
     public var maximumX : Int = -500
 
     public var lineCount : Int = 0
@@ -286,6 +302,29 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     public var pauseDuration : TimeInterval = 0.5
 
     func didLookAt(x: Int, y: Int) {
+        if (x > 410 || x < -10) { 
+            return
+        }
+
+        if (x > maximumX) {
+            maximumX = x
+            return
+        }
+
+        if ((maximumX - x) < LEFT_LOOK_THRESHOLD) {
+            return
+        }
+
+        self.distanceLabel.text = "READ a LINE"
+
+        // Read a line
+        self.timerAction()
+        maximumX = -500
+        // let smoothThresholdNumber: Int = 5
+        // self.eyeLookAtPositionXs.append((eyeRLookAt.x + eyeLLookAt.x) / 2)
+        // self.eyeLookAtPositionYs.append(-(eyeRLookAt.y + eyeLLookAt.y) / 2)
+        // self.eyeLookAtPositionXs = Array(self.eyeLookAtPositionXs.suffix(smoothThresholdNumber))
+        // self.eyeLookAtPositionYs = Array(self.eyeLookAtPositionYs.suffix(smoothThresholdNumber))
     }
     
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
