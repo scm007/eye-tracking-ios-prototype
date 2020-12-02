@@ -21,8 +21,21 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     @IBOutlet weak var lookAtPositionXLabel: UILabel!
     @IBOutlet weak var lookAtPositionYLabel: UILabel!
     @IBOutlet weak var distanceLabel: UILabel!
+
+    var _faceAnchor: ARFaceAnchor?
     
-    var faceNode: SCNNode = SCNNode()
+    var faceNode: SCNNode = {
+        let geometry = SCNCone(topRadius: 0.005, bottomRadius: 0, height: 0.2)
+        geometry.radialSegmentCount = 3
+        geometry.firstMaterial?.diffuse.contents = UIColor.blue
+        let node = SCNNode()
+        node.geometry = geometry
+        node.eulerAngles.x = -.pi / 2
+        node.position.z = 0.1
+        let parentNode = SCNNode()
+        parentNode.addChildNode(node)
+        return parentNode
+    }()
     
     var eyeLNode: SCNNode = {
         let geometry = SCNCone(topRadius: 0.005, bottomRadius: 0, height: 0.2)
@@ -52,6 +65,7 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     
     var lookAtTargetEyeLNode: SCNNode = SCNNode()
     var lookAtTargetEyeRNode: SCNNode = SCNNode()
+    var lookAtTargetLANode: SCNNode = SCNNode()
     
     // actual physical size of iPhoneX screen
     let phoneScreenSize = CGSize(width: 0.0623908297, height: 0.135096943231532)
@@ -73,6 +87,8 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     var eyeLookAtPositionXs: [CGFloat] = []
     
     var eyeLookAtPositionYs: [CGFloat] = []
+
+    var isTouching: Bool = false
     
     override var preferredStatusBarStyle: UIStatusBarStyle {
         return UIStatusBarStyle.lightContent
@@ -81,7 +97,7 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        webView.load(URLRequest(url: URL(string: "https://www.apple.com")!))
+        webView.load(URLRequest(url: URL(string: "https://www.wikipedia.org")!))
         
         // Setup Design Elements
         eyePositionIndicatorView.layer.cornerRadius = eyePositionIndicatorView.bounds.width / 2
@@ -104,10 +120,12 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         virtualPhoneNode.addChildNode(virtualScreenNode)
         faceNode.addChildNode(eyeLNode)
         faceNode.addChildNode(eyeRNode)
+        faceNode.addChildNode(lookAtTargetLANode)
         eyeLNode.addChildNode(lookAtTargetEyeLNode)
         eyeRNode.addChildNode(lookAtTargetEyeRNode)
         
         // Set LookAtTargetEye at 2 meters away from the center of eyeballs to create segment vector
+        lookAtTargetLANode.position.z = 2
         lookAtTargetEyeLNode.position.z = 2
         lookAtTargetEyeRNode.position.z = 2
     }
@@ -122,6 +140,38 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
         
         // Run the view's session
         sceneView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+
+
+        let gesture = UITapGestureRecognizer(target: self, action:  #selector(self.checkAction))
+        self.webView.addGestureRecognizer(gesture)
+        let timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(timerAction), userInfo: nil, repeats: true)
+    }
+
+    @objc func checkAction(sender : UITapGestureRecognizer) {
+      // Do what you want
+      self.isTouching = true
+    }
+
+    @objc
+    func timerAction(_ timer: Timer) {
+        let yOffset = self.webView.scrollView.contentOffset.y + (LINE_HEIGHT * LINES_PER_SECOND)
+        let scrollView = self.webView.scrollView
+
+        if (self.isTouching) {
+            return
+        }
+
+        if (_faceAnchor != nil && !_faceAnchor!.isTracked) {
+            return
+        }
+        if (scrollView.isTracking || scrollView.isDragging) {
+            return
+        } else {
+        DispatchQueue.main.async {
+            UIView.animate(withDuration: 1, delay: 0, options: UIView.AnimationOptions.curveLinear, animations: {
+                scrollView.contentOffset.y = yOffset
+        }, completion: nil) }
+        }
     }
     
     override func viewWillDisappear(_ animated: Bool) {
@@ -144,14 +194,19 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
     // MARK: - update(ARFaceAnchor)
     
     func update(withFaceAnchor anchor: ARFaceAnchor) {
-        
+        _faceAnchor = anchor
+
         eyeRNode.simdTransform = anchor.rightEyeTransform
         eyeLNode.simdTransform = anchor.leftEyeTransform
         
         var eyeLLookAt = CGPoint()
         var eyeRLookAt = CGPoint()
+        var blendLookAtPoint = CGPoint()
+
+        lookAtTargetLANode.position = SCNVector3.init(anchor.lookAtPoint)
+        lookAtTargetLANode.position.z = 2
         
-        let heightCompensation: CGFloat = 312
+        let heightCompensation: CGFloat = 312 * (1.5)
         
         DispatchQueue.main.async {
 
@@ -161,6 +216,8 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
             
             let phoneScreenEyeLHitTestResults = self.virtualPhoneNode.hitTestWithSegment(from: self.lookAtTargetEyeLNode.worldPosition, to: self.eyeLNode.worldPosition, options: nil)
             
+            let phoneScreenEyeLookHitTestResults = self.virtualPhoneNode.hitTestWithSegment(from: self.faceNode.worldPosition, to: self.lookAtTargetLANode.worldPosition, options: nil)
+
             for result in phoneScreenEyeRHitTestResults {
                 
                 eyeRLookAt.x = CGFloat(result.localCoordinates.x) / (self.phoneScreenSize.width / 2) * self.phoneScreenPointSize.width
@@ -174,9 +231,18 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
                 
                 eyeLLookAt.y = CGFloat(result.localCoordinates.y) / (self.phoneScreenSize.height / 2) * self.phoneScreenPointSize.height + heightCompensation
             }
+
+            for result in phoneScreenEyeLookHitTestResults {
+                
+                blendLookAtPoint.x = CGFloat(result.localCoordinates.x) / (self.phoneScreenSize.width / 2) * self.phoneScreenPointSize.width
+                
+                blendLookAtPoint.y = CGFloat(result.localCoordinates.y) / (self.phoneScreenSize.height / 2) * self.phoneScreenPointSize.height + heightCompensation
+            }
             
             // Add the latest position and keep up to 8 recent position to smooth with.
-            let smoothThresholdNumber: Int = 10
+            let smoothThresholdNumber: Int = 5
+            // self.eyeLookAtPositionXs.append(blendLookAtPoint.x)
+            // self.eyeLookAtPositionYs.append(blendLookAtPoint.y)
             self.eyeLookAtPositionXs.append((eyeRLookAt.x + eyeLLookAt.x) / 2)
             self.eyeLookAtPositionYs.append(-(eyeRLookAt.y + eyeLLookAt.y) / 2)
             self.eyeLookAtPositionXs = Array(self.eyeLookAtPositionXs.suffix(smoothThresholdNumber))
@@ -202,9 +268,24 @@ class ViewController: UIViewController, ARSCNViewDelegate, ARSessionDelegate {
             
             // Update distance label value
             self.distanceLabel.text = "\(Int(round(distance * 100))) cm"
-            
+
+            self.didLookAt(
+                x: Int(round(smoothEyeLookAtPositionX + self.phoneScreenPointSize.width / 2)),
+                y: Int(round(smoothEyeLookAtPositionY + self.phoneScreenPointSize.height / 2)))
         }
-        
+    }
+
+    public var LEFT_LOOK_THRESHOLD : Float = 100.0
+    public var maximumX : Int = -500
+
+    public var lineCount : Int = 0
+
+    public var LINE_HEIGHT : CGFloat = 30.0
+    public var LINES_PER_SECOND : CGFloat = 0.5
+
+    public var pauseDuration : TimeInterval = 0.5
+
+    func didLookAt(x: Int, y: Int) {
     }
     
     func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
